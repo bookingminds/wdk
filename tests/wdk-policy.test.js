@@ -2986,6 +2986,52 @@ wdk.registerPolicy({
 
       expect(err.policyId).toBe('freeze')
     })
+
+    test.each([
+      ['Object.setPrototypeOf', (handle, spoofed) => { Object.setPrototypeOf(handle, spoofed) }],
+      ['__proto__ assignment', (handle, spoofed) => { handle.__proto__ = spoofed }]
+    ])('a later getAccount() stays governed after %s through the handle', async (_label, swap) => {
+      const raw = buildAccount()
+      delete raw.path
+      Object.setPrototypeOf(raw, { get path () { return PATH_DEFAULT } })
+      getAccountMock.mockResolvedValue(raw)
+
+      wdk.registerWallet('ethereum', WalletManagerMock, {}).registerPolicy(freeze)
+
+      swap(await wdk.getAccount('ethereum', 0), { get path () { return "0'/0/9" } })
+
+      expect(raw.path).toBe("0'/0/9")
+
+      const account = await wdk.getAccount('ethereum', 0)
+      const err = await catchAsync(() => account.sendTransaction({ to: RECIPIENT, value: 1n }))
+
+      expect(err.policyId).toBe('freeze')
+    })
+
+    test('a protocol simulate is evaluated against the wrap-time path even if the account path changes afterwards', async () => {
+      class MySwapProtocol extends SwapProtocol {
+        constructor () { super() }
+        async swap () { return DUMMY_SWAP_RESULT }
+      }
+
+      const raw = buildAccount()
+      getAccountMock.mockResolvedValue(raw)
+
+      wdk
+        .registerWallet('ethereum', WalletManagerMock, {})
+        .registerProtocol('ethereum', 'velora', MySwapProtocol, {})
+        .registerPolicy(allowAll)
+        .registerPolicy({ ...freeze, rules: [{ name: 'deny-swap', operation: 'swap', action: 'DENY', conditions: [] }] })
+
+      const account = await wdk.getAccount('ethereum', 0)
+
+      raw.path = "0'/0/9"
+
+      const result = await account.simulate.getSwapProtocol('velora').swap({ tokenIn: 'A', tokenOut: 'B', tokenInAmount: 1n })
+
+      expect(result.decision).toBe('DENY')
+      expect(result.policy_id).toBe('freeze')
+    })
   })
   // -------------------------------------------------------------------------
   // Method coverage: deny-by-default proxy + exclusion set
