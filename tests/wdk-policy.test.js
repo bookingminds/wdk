@@ -1565,6 +1565,39 @@ wdk.registerPolicy({
         .rejects.toMatchObject({ name: 'PolicyViolationError', policyId: 'freeze', ruleName: 'account-frozen' })
     })
 
+    test('after a matching override, later ALLOW conditions do not run, but later DENY conditions still do', async () => {
+      getAccountMock.mockResolvedValue(buildAccount())
+      const calls = { allow: 0, deny: 0 }
+
+      wdk
+        .registerWallet('ethereum', WalletManagerMock, {})
+        .registerPolicy({
+          id: 'treasury',
+          name: 'treasury',
+          scope: 'account',
+          wallet: 'ethereum',
+          accounts: [PATH_DEFAULT],
+          rules: [{ name: 'treasury-allow', operation: 'sendTransaction', action: 'ALLOW', override_broader_scope: true, conditions: [] }]
+        })
+        .registerPolicy({
+          id: 'limits',
+          name: 'limits',
+          scope: 'account',
+          wallet: 'ethereum',
+          accounts: [PATH_DEFAULT],
+          rules: [
+            { name: 'rate-limit', operation: 'sendTransaction', action: 'ALLOW', conditions: [() => { calls.allow++; return true }] },
+            { name: 'blocklist', operation: 'sendTransaction', action: 'DENY', conditions: [() => { calls.deny++; return false }] }
+          ]
+        })
+
+      const account = await wdk.getAccount('ethereum', 0)
+      const result = await account.sendTransaction({ to: RECIPIENT, value: 50n })
+
+      expect(result.hash).toBe(DUMMY_TX_HASH)
+      expect(calls).toEqual({ allow: 0, deny: 1 })
+    })
+
     test('the override only engages when the account-scope rule actually matches; otherwise broader DENY fires', async () => {
       getAccountMock.mockResolvedValue(buildAccount())
 

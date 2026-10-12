@@ -104,6 +104,10 @@ async function evalGroup (policies, context, trace, scope, { allowOverride }) {
     for (const rule of policy.rules) {
       if (!ruleAddressesOperation(rule, context.operation)) continue
 
+      // After an override only a DENY can change the result, so other rules are
+      // skipped before their conditions run (no extra latency or stateful calls).
+      if (override !== null && rule.action !== 'DENY') continue
+
       const failClose = rule.action === 'DENY'
       const { matched, error } = await evalConditions(rule.conditions, context, { conditionTimeoutMs, failClose })
 
